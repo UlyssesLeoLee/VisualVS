@@ -10,7 +10,7 @@ export class K8sManager {
             
             const command = `kubectl get pods -l ${podSelector} -o jsonpath="{.items[0].metadata.name}"`;
             
-            exec(command, (err, stdout) => {
+            exec(command, (err: any, stdout: any) => {
                 if (err || !stdout.trim()) {
                     return reject(new Error(`Could not find pod with selector: ${podSelector}`));
                 }
@@ -21,14 +21,14 @@ export class K8sManager {
                 // Start port-forward in background
                 const pfProcess = exec(`kubectl port-forward ${podName} ${localPort}:7687`);
                 
-                pfProcess.stdout?.on('data', (data) => {
+                pfProcess.stdout?.on('data', (data: any) => {
                     if (data.includes('Forwarding from')) {
                         vscode.window.showInformationMessage(`VisualVS: Memgraph connection established on port ${localPort}`);
                         resolve();
                     }
                 });
                 
-                pfProcess.stderr?.on('data', (data) => {
+                pfProcess.stderr?.on('data', (data: any) => {
                     if (data.includes('error')) {
                         reject(new Error(`Port-forward failed: ${data}`));
                     }
