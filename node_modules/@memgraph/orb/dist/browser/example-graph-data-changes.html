@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang='en' type="module">
+<head>
+  <base href=".">
+  <meta charset='UTF-8'>
+  <title>Orb | Graph dynamics: Add, update, and remove nodes and edges</title>
+  <script type="text/javascript" src="./orb.js"></script>
+</head>
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+  }
+</style>
+<body>
+  <div style="display: flex; flex-direction: column; align-items: center; height: 100%;">
+    <h1>Example 5 - Dynamics</h1>
+    <p style="width: 70%">
+      Renders a simple graph to show graph dynamics: adding, updating, and removing
+      nodes and edges. In intervals of 3 seconds, 1 new node and 1 new edge will be
+      added to the graph. Node will be removed from the graph on node click event.
+    </p>
+
+    <!--
+      Make sure that your graph container has a defined width and height.
+      Orb will expand to any available space, but won't be visible if it's parent container is collapsed.
+    -->
+    <div id='graph' style="flex: 1; width: 100%;"></div>
+  </div>
+  <script type="text/javascript">
+    const container = document.getElementById('graph');
+
+    let n = 10;
+    let nodes = new Array(n);
+    let edges = new Array(n);
+    for (let i = 0; i < n; i++) {
+      nodes[i] = {
+        id: i,
+        label: `Node ${i}`,
+      };
+      edges[i] = {
+        id: i,
+        start: Math.floor(Math.sqrt(i)),
+        end: i + 1,
+        label: `Edge ${i}`
+      };
+    }
+
+    const orb = new Orb.Orb(container);
+
+    orb.data.setDefaultStyle({
+      getNodeStyle(node) {
+        return {
+          borderColor: '#1d1d1d',
+          borderWidth: 0.6,
+          color: '#DD2222',
+          colorHover: '#e7644e',
+          colorSelected: '#e7644e',
+          fontSize: 3,
+          label: node.data.label,
+          size: 6,
+        };
+      },
+      getEdgeStyle(edge) {
+        return {
+          color: '#999999',
+          colorHover: '#1d1d1d',
+          colorSelected: '#1d1d1d',
+          fontSize: 3,
+          width: 0.3,
+          widthHover: 0.9,
+          widthSelected: 0.9,
+          label: edge.data.label,
+        };
+      },
+    });
+
+    // Initialize nodes and edges
+    orb.data.setup({ nodes, edges });
+
+    // Assign a basic style
+    const randomlyExpandGraph = () => {
+      console.log('Randomly expanding graph...');
+      setTimeout(() => {
+        const graphUpdates = {
+          nodes: [],
+          edges: [],
+        };
+
+        const newNode = {
+          id: n,
+          label: `Node ${n} (new)`,
+        };
+        graphUpdates.nodes.push(newNode);
+
+        const currentNodes = orb.data.getNodes();
+        if (currentNodes.length) {
+          const newEdge = {
+            id: n,
+            start: currentNodes[Math.floor(Math.random() * currentNodes.length)].id,
+            end: n,
+            label: `Edge ${n} (new)`
+          };
+          graphUpdates.edges.push(newEdge);
+        }
+        n += 1;
+
+        orb.data.merge(graphUpdates);
+        orb.view.render();
+        randomlyExpandGraph();
+      }, 3000);
+    };
+
+    randomlyExpandGraph();
+    
+    orb.events.on(Orb.OrbEventType.NODE_CLICK, (event) => {
+      console.log('Node clicked: ', event.node);
+      orb.data.remove({ nodeIds: [event.node.id] });
+      orb.view.render();
+    });
+
+    // Render and recenter the view
+    orb.view.render(() => {
+      orb.view.recenter();
+    });
+
+  </script>
+</body>
+</html>

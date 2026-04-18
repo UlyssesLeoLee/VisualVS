@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VisualVS Graph</title>
+    <script src="https://unpkg.com/@memgraph/orb/dist/orb.bundle.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #0b0e14;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+        #viewport {
+            width: 100%;
+            height: 100%;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+        }
+        h1 {
+            font-size: 1.2rem;
+            margin: 0 0 10px 0;
+            background: linear-gradient(90deg, #00f2fe, #4facfe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .status {
+            font-size: 0.8rem;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <h1>VisualVS Topology</h1>
+        <div class="status" id="status">Waiting for data...</div>
+    </div>
+    <div id="viewport"></div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        const container = document.getElementById('viewport');
+        const statusEl = document.getElementById('status');
+        
+        // Initialize Orb
+        const orb = new Orb.Orb(container);
+
+        // Styling for Premium look
+        orb.view.setSettings({
+            physics: {
+                enabled: false // We use Dagre for layout
+            }
+        });
+
+        orb.data.setupStyles({
+            getNodeStyle: (node) => ({
+                size: 10,
+                color: '#4facfe',
+                label: node.data.label,
+                labelColor: '#ffffff',
+                fontSize: 4,
+                borderColor: '#00f2fe',
+                borderWidth: 1,
+                shadowColor: '#00f2fe',
+                shadowBlur: 10
+            }),
+            getEdgeStyle: (edge) => ({
+                width: 0.5,
+                color: 'rgba(255, 255, 255, 0.2)',
+                label: edge.data.label,
+                labelColor: '#888',
+                fontSize: 3,
+                arrowSize: 2
+            })
+        });
+
+        window.addEventListener('message', event => {
+            const { type, data } = event.data;
+            if (type === 'setData') {
+                statusEl.innerText = `Nodes: ${data.nodes.length}, Edges: ${data.edges.length}`;
+                
+                // 1. Arrange with Dagre
+                const g = new dagre.graphlib.Graph();
+                g.setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 100 });
+                g.setDefaultEdgeLabel(() => ({}));
+
+                data.nodes.forEach(node => g.setNode(node.id, { label: node.label, width: 40, height: 20 }));
+                data.edges.forEach(edge => g.setEdge(edge.start, edge.end));
+
+                dagre.layout(g);
+
+                // 2. Map coordinates back to Orb
+                const positionedNodes = data.nodes.map(node => {
+                    const pos = g.node(node.id);
+                    return {
+                        ...node,
+                        x: pos.x,
+                        y: pos.y
+                    };
+                });
+
+                // 3. Update Orb
+                orb.data.setup({ nodes: positionedNodes, edges: data.edges });
+                orb.view.render(() => orb.view.recenter());
+            }
+        });
+    </script>
+</body>
+</html>
