@@ -1,13 +1,13 @@
 {
   "name": "visualvs",
   "displayName": "VisualVS",
-  "description": "Visualize code topology using AI and Memgraph",
-  "version": "0.1.0",
+  "description": "Visualize code topology using AI and Memgraph. Source: https://github.com/UlyssesLeoLee/VisualVS",
+  "version": "0.1.6",
   "publisher": "UlyssesLi",
   "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/UlyssesLi/visualvs"
+    "url": "https://github.com/UlyssesLeoLee/VisualVS"
   },
   "license": "Apache-2.0",
   "engines": {
@@ -21,6 +21,24 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "visualvs-explorer",
+          "title": "VisualVS",
+          "icon": "resources/view-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "visualvs-explorer": [
+        {
+          "id": "visualvs-sidebar",
+          "name": "VisualVS Topology",
+          "type": "webview"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "visualvs.visualize",
@@ -46,10 +64,29 @@
           "default": "gpt-4",
           "description": "AI Model to use"
         },
+        "visualvs.memgraph.connectionMode": {
+          "type": "string",
+          "enum": [
+            "k8s",
+            "direct"
+          ],
+          "default": "k8s",
+          "description": "Connection Mode: k8s (automatic discovery) or direct (manual host/port)"
+        },
+        "visualvs.memgraph.host": {
+          "type": "string",
+          "default": "localhost",
+          "description": "Memgraph Host (for direct mode)"
+        },
         "visualvs.memgraph.podSelector": {
           "type": "string",
           "default": "app=memgraph",
           "description": "K8s selector for Memgraph pod"
+        },
+        "visualvs.memgraph.namespace": {
+          "type": "string",
+          "default": "",
+          "description": "K8s namespace for Memgraph pod (leave empty for default)"
         },
         "visualvs.memgraph.port": {
           "type": "number",

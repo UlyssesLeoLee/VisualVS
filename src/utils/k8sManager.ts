@@ -2,24 +2,22 @@ import { exec } from 'child_process';
 import * as vscode from 'vscode';
 
 export class K8sManager {
-    static async ensurePortForward(podSelector: string, localPort: number): Promise<void> {
+    static async ensurePortForward(podSelector: string, localPort: number, namespace?: string): Promise<void> {
         return new Promise((resolve, reject) => {
-            // 1. Check if the port is already in use (assuming it might be our previous forward)
-            // For simplicity, we'll try to find the pod and start port-forwarding.
-            // In a production app, we'd handle process persistence better.
-            
-            const command = `kubectl get pods -l ${podSelector} -o jsonpath="{.items[0].metadata.name}"`;
+            const nsFlag = namespace ? `-n ${namespace}` : '';
+            const command = `kubectl get pods ${nsFlag} -l ${podSelector} -o jsonpath="{.items[0].metadata.name}"`;
             
             exec(command, (err: any, stdout: any) => {
                 if (err || !stdout.trim()) {
-                    return reject(new Error(`Could not find pod with selector: ${podSelector}`));
+                    return reject(new Error(`Could not find pod with selector: ${podSelector} ${namespace ? `in namespace: ${namespace}` : ''}`));
                 }
                 
                 const podName = stdout.trim();
                 vscode.window.showInformationMessage(`VisualVS: Found Memgraph pod ${podName}. Starting port-forward...`);
                 
                 // Start port-forward in background
-                const pfProcess = exec(`kubectl port-forward ${podName} ${localPort}:7687`);
+                const pfCommand = `kubectl port-forward ${podName} ${localPort}:7687 ${nsFlag}`;
+                const pfProcess = exec(pfCommand);
                 
                 pfProcess.stdout?.on('data', (data: any) => {
                     if (data.includes('Forwarding from')) {

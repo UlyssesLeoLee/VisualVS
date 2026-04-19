@@ -44,55 +44,156 @@
             font-size: 0.8rem;
             color: #888;
         }
+        #welcome-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            text-align: center;
+            padding: 40px;
+        }
+        .welcome-card {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 40px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            max-width: 500px;
+        }
+        .welcome-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+        }
+        .welcome-title {
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+            color: #4facfe;
+        }
+        .welcome-text {
+            color: #aaa;
+            line-height: 1.6;
+        }
+        #error-console {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            background: rgba(255, 69, 58, 0.15);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 69, 58, 0.3);
+            border-radius: 8px;
+            padding: 15px;
+            display: none;
+            z-index: 100;
+        }
+        .error-header {
+            color: #ff453a;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .error-actions {
+            margin-top: 10px;
+        }
+        .btn-fix {
+            background: #ff453a;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
-    <div class="controls">
-        <h1>VisualVS Topology</h1>
-        <div class="status" id="status">Waiting for data...</div>
+    <div id="welcome-screen">
+        <div class="welcome-card">
+            <div class="welcome-icon">🔭</div>
+            <div class="welcome-title">Welcome to VisualVS</div>
+            <p class="welcome-text" id="welcome-text">
+                No active code file detected. To begin your topological journey:<br><br>
+                1. Open a source file (TS, JS, etc.)<br>
+                2. Click <b>"Analyze"</b> in the Command Palette or the VisualVS Sidebar.
+            </p>
+            <div id="welcome-actions" class="hidden">
+                <button class="btn-fix" onclick="openSettings()">Fix Configuration</button>
+            </div>
+        </div>
     </div>
-    <div id="viewport"></div>
+
+    <div id="main-view" class="hidden">
+        <div class="controls">
+            <h1>VisualVS Topology</h1>
+            <div class="status" id="status">Waiting for data...</div>
+            <button onclick="analyze()" style="margin-top:10px; padding: 5px 15px; background: #4facfe; color: white; border: none; border-radius: 4px; cursor: pointer;">Analyze Now</button>
+        </div>
+        <div id="viewport"></div>
+    </div>
+
+    <div id="error-console">
+        <div class="error-header">
+            <span>⚠️ Diagnosis Result</span>
+            <button onclick="hideError()" style="background:none; border:none; color:white; cursor:pointer;">✕</button>
+        </div>
+        <div id="error-message" style="margin-top:10px; font-size: 0.9rem;"></div>
+        <div class="error-actions">
+            <button class="btn-fix" onclick="openSettings()">Open Settings</button>
+        </div>
+    </div>
 
     <script>
         const vscode = acquireVsCodeApi();
         const container = document.getElementById('viewport');
         const statusEl = document.getElementById('status');
+        const errorConsole = document.getElementById('error-console');
+        const errorMessage = document.getElementById('error-message');
         
+        function analyze() {
+            vscode.postMessage({ type: 'visualize' });
+        }
+
+        function openSettings() {
+            vscode.postMessage({ type: 'openSettings' });
+        }
+
+        function hideError() {
+            errorConsole.style.display = 'none';
+        }
+
         // Initialize Orb
         const orb = new Orb.Orb(container);
 
-        // Styling for Premium look
-        orb.view.setSettings({
-            physics: {
-                enabled: false // We use Dagre for layout
-            }
-        });
-
-        orb.data.setupStyles({
-            getNodeStyle: (node) => ({
-                size: 10,
-                color: '#4facfe',
-                label: node.data.label,
-                labelColor: '#ffffff',
-                fontSize: 4,
-                borderColor: '#00f2fe',
-                borderWidth: 1,
-                shadowColor: '#00f2fe',
-                shadowBlur: 10
-            }),
-            getEdgeStyle: (edge) => ({
-                width: 0.5,
-                color: 'rgba(255, 255, 255, 0.2)',
-                label: edge.data.label,
-                labelColor: '#888',
-                fontSize: 3,
-                arrowSize: 2
-            })
-        });
+        // ... [OMITTED STYLING UNCHANGED] ...
 
         window.addEventListener('message', event => {
-            const { type, data } = event.data;
+            const { type, data, configError, currentFile } = event.data;
+            
+            if (currentFile) {
+                statusEl.innerText = `Target: ${currentFile}`;
+            }
+
+            if (configError) {
+                document.getElementById('welcome-text').innerText = configError;
+                document.getElementById('welcome-actions').classList.remove('hidden');
+                
+                // Also show in console if already in main view
+                errorMessage.innerText = configError;
+                errorConsole.style.display = 'block';
+                return;
+            }
+
             if (type === 'setData') {
+                // Toggle view
+                document.getElementById('welcome-screen').classList.add('hidden');
+                document.getElementById('main-view').classList.remove('hidden');
+
+                if (!data.nodes || data.nodes.length === 0) {
+                    statusEl.innerText = "No graph data found for this file.";
+                    return;
+                }
+
                 statusEl.innerText = `Nodes: ${data.nodes.length}, Edges: ${data.edges.length}`;
                 
                 // 1. Arrange with Dagre

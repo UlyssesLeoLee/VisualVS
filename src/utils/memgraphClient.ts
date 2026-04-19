@@ -4,7 +4,11 @@ export class MemgraphClient {
     private driver: any;
 
     constructor(host: string, port: number) {
-        this.driver = neo4j.driver(`bolt://${host}:${port}`, neo4j.auth.basic('', ''));
+        this.driver = neo4j.driver(
+            `bolt://${host}:${port}`, 
+            neo4j.auth.basic('', ''),
+            { encrypted: 'ENCRYPTED_OFF', trust: 'TRUST_ALL_CERTIFICATES' }
+        );
     }
 
     async executeCypher(cypher: string): Promise<any> {

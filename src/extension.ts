@@ -10,6 +10,22 @@ let currentPanel: vscode.WebviewPanel | undefined = undefined;
 export function activate(context: vscode.ExtensionContext) {
     console.log('VisualVS is now active!');
 
+    // Register Sidebar Provider
+    const sidebarProvider = new VisualVSSidebarProvider(context.extensionUri);
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider("visualvs-sidebar", sidebarProvider)
+    );
+
+    // Listen to file changes
+    vscode.window.onDidChangeActiveTextEditor(editor => {
+        if (currentPanel && editor) {
+            currentPanel.webview.postMessage({ 
+                type: 'updateContext', 
+                currentFile: path.basename(editor.document.fileName) 
+            });
+        }
+    }, null, context.subscriptions);
+
     let disposable = vscode.commands.registerCommand('visualvs.visualize', async () => {
         const pipeline = new Pipeline();
         pipeline.addPre(new EnvLoaderPlugin());
@@ -28,25 +44,82 @@ export function activate(context: vscode.ExtensionContext) {
         try {
             await pipeline.run(pipelineContext);
             
-            // After ingestion, fetch data for visualization
-            const localPort = pipelineContext.config.get<number>('memgraph.port') || 7687;
-            const client = new MemgraphClient('localhost', localPort);
-            const data = await client.fetchGraphData();
-            await client.close();
+            let data = { nodes: [], edges: [] };
+            if (pipelineContext.code && !pipelineContext.configError) {
+                const host = pipelineContext.config.get<string>('memgraph.host') || 'localhost';
+                const localPort = pipelineContext.config.get<number>('memgraph.port') || 7687;
+                const client = new MemgraphClient(host, localPort);
+                data = await client.fetchGraphData();
+                await client.close();
+            }
 
-            showWebview(context, data);
+            showWebview(context, data, pipelineContext.configError, pipelineContext.fileName ? path.basename(pipelineContext.fileName) : undefined);
         } catch (error: any) {
-            vscode.window.showErrorMessage(`VisualVS Error: ${error.message}`);
+            if (currentPanel) {
+                currentPanel.webview.postMessage({ type: 'error', configError: error.message });
+            } else {
+                vscode.window.showErrorMessage(`VisualVS Error: ${error.message}`);
+                showWebview(context, { nodes: [], edges: [] }, error.message);
+            }
         }
     });
 
     context.subscriptions.push(disposable);
 }
 
-function showWebview(context: vscode.ExtensionContext, data: any) {
+class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
+    constructor(private readonly _extensionUri: vscode.Uri) {}
+
+    resolveWebviewView(webviewView: vscode.WebviewView) {
+        webviewView.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [this._extensionUri]
+        };
+
+        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+
+        webviewView.webview.onDidReceiveMessage(data => {
+            switch (data.type) {
+                case 'visualize':
+                    vscode.commands.executeCommand('visualvs.visualize');
+                    break;
+            }
+        });
+    }
+
+    private _getHtmlForWebview(webview: vscode.Webview) {
+        return `<!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <style>
+                    body { font-family: sans-serif; padding: 20px; color: var(--vscode-foreground); }
+                    button { 
+                        width: 100%; padding: 10px; cursor: pointer; 
+                        background: #4facfe; color: white; border: none; border-radius: 4px;
+                        font-weight: bold;
+                    }
+                    button:hover { background: #00f2fe; }
+                    .info { font-size: 0.9rem; color: var(--vscode-descriptionForeground); margin-bottom: 20px; }
+                </style>
+            </head>
+            <body>
+                <div class="info">Visualize your code topology with AI and Memgraph.</div>
+                <button onclick="visualize()">Launch Visualization</button>
+                <script>
+                    const vscode = acquireVsCodeApi();
+                    function visualize() {
+                        vscode.postMessage({ type: 'visualize' });
+                    }
+                </script>
+            </body>
+            </html>`;
+    }
+}
+
+function showWebview(context: vscode.ExtensionContext, data: any, configError?: string, currentFile?: string) {
     if (currentPanel) {
         currentPanel.reveal(vscode.ViewColumn.Two);
-        currentPanel.webview.postMessage({ type: 'setData', data });
+        currentPanel.webview.postMessage({ type: 'setData', data, configError, currentFile });
         return;
     }
 
@@ -65,9 +138,19 @@ function showWebview(context: vscode.ExtensionContext, data: any) {
     
     currentPanel.webview.html = html;
 
-    // Send data after a short delay to ensure webview is ready
+    currentPanel.webview.onDidReceiveMessage(message => {
+        switch (message.type) {
+            case 'visualize':
+                vscode.commands.executeCommand('visualvs.visualize');
+                break;
+            case 'openSettings':
+                vscode.commands.executeCommand('workbench.action.openSettings', 'visualvs');
+                break;
+        }
+    }, null, context.subscriptions);
+
     setTimeout(() => {
-        currentPanel?.webview.postMessage({ type: 'setData', data });
+        currentPanel?.webview.postMessage({ type: 'setData', data, configError, currentFile });
     }, 1000);
 
     currentPanel.onDidDispose(() => {
