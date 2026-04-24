@@ -2,7 +2,7 @@
   "name": "visualvs",
   "displayName": "VisualVS",
   "description": "Visualize code topology using AI and Memgraph. Source: https://github.com/UlyssesLeoLee/VisualVS",
-  "version": "0.1.6",
+  "version": "0.2.16",
   "publisher": "UlyssesLi",
   "icon": "icon.png",
   "repository": {
@@ -11,7 +11,7 @@
   },
   "license": "Apache-2.0",
   "engines": {
-    "vscode": "^1.75.0"
+    "vscode": "^1.77.0"
   },
   "categories": [
     "Other"
@@ -22,10 +22,10 @@
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
-      "activitybar": [
+      "secondarySideBar": [
         {
           "id": "visualvs-explorer",
-          "title": "VisualVS",
+          "title": "VVS",
           "icon": "resources/view-icon.svg"
         }
       ]
@@ -34,7 +34,7 @@
       "visualvs-explorer": [
         {
           "id": "visualvs-sidebar",
-          "name": "VisualVS Topology",
+          "name": "VVS Topology",
           "type": "webview"
         }
       ]
@@ -43,6 +43,21 @@
       {
         "command": "visualvs.visualize",
         "title": "VisualVS: Visualize Current Code Flow",
+        "category": "VisualVS"
+      },
+      {
+        "command": "visualvs.deployMemgraph",
+        "title": "VisualVS: Deploy Memgraph to Kubernetes",
+        "category": "VisualVS"
+      },
+      {
+        "command": "visualvs.toggleWindow",
+        "title": "VisualVS: Toggle VVS Window",
+        "category": "VisualVS"
+      },
+      {
+        "command": "visualvs.updateFromVsix",
+        "title": "VisualVS: Update Local Extension from VSIX",
         "category": "VisualVS"
       }
     ],
@@ -70,7 +85,7 @@
             "k8s",
             "direct"
           ],
-          "default": "k8s",
+          "default": "direct",
           "description": "Connection Mode: k8s (automatic discovery) or direct (manual host/port)"
         },
         "visualvs.memgraph.host": {
@@ -90,8 +105,23 @@
         },
         "visualvs.memgraph.port": {
           "type": "number",
-          "default": 7687,
-          "description": "Local port for port-forwarding Memgraph Bolt"
+          "default": 37788,
+          "description": "Port used to connect to Memgraph (for both direct and k8s modes)"
+        },
+        "visualvs.memgraph.username": {
+          "type": "string",
+          "default": "",
+          "description": "Memgraph Username (leave empty if not needed)"
+        },
+        "visualvs.memgraph.password": {
+          "type": "string",
+          "default": "",
+          "description": "Memgraph Password (leave empty if not needed)"
+        },
+        "visualvs.memgraph.autoDeployK8s": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically deploy a lightweight Memgraph instance to Kubernetes if not found"
         }
       }
     }

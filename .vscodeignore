@@ -2,6 +2,7 @@
 .vscode-test/**
 out/test/**
 src/**
+!src/webview/index.html
 .gitignore
 .vscodeignore
 tsconfig.json
