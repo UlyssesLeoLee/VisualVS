@@ -66,12 +66,22 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.onDidChangeActiveTextEditor(editor => {
         if (editor && editor.document.uri.scheme === 'file') {
             sidebarProvider.setTargetDocument(editor.document);
+            
+            const autoMode = context.globalState.get<boolean>('autoMode', false);
+            if (autoMode) {
+                sidebarProvider.runAnalysis();
+            }
+        } else {
+            sidebarProvider.clearTargetDocument();
         }
     }, null, context.subscriptions);
 
     // Initial state on activation
-    if (vscode.window.activeTextEditor?.document.uri.scheme === 'file') {
-        sidebarProvider.setTargetDocument(vscode.window.activeTextEditor.document);
+    const activeEditor = vscode.window.activeTextEditor;
+    if (activeEditor && activeEditor.document.uri.scheme === 'file') {
+        sidebarProvider.setTargetDocument(activeEditor.document);
+    } else {
+        sidebarProvider.clearTargetDocument();
     }
 
     const visualizeCmd = vscode.commands.registerCommand('visualvs.visualize', async () => {
@@ -164,10 +174,21 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
         this._targetDocument = doc;
         const fileName = path.basename(doc.fileName);
         const fullPath = doc.fileName;
+        const autoMode = this._context.globalState.get<boolean>('autoMode', false);
         this.postMessageToWebview({
             type: 'updateContext',
             currentFile: fileName,
-            fullPath: fullPath
+            fullPath: fullPath,
+            autoMode: autoMode
+        });
+    }
+
+    public clearTargetDocument() {
+        this._targetDocument = undefined;
+        this.postMessageToWebview({
+            type: 'updateContext',
+            currentFile: undefined,
+            fullPath: undefined
         });
     }
 
@@ -232,6 +253,9 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
                     case 'updatePMode':
                         this._context.globalState.update('persistenceMode', message.mode);
                         break;
+                    case 'updateAutoMode':
+                        this._context.globalState.update('autoMode', message.enabled);
+                        break;
                     case 'openNode':
                         this._handleOpenNode(message.data);
                         break;
@@ -262,6 +286,12 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
         activeController = new AbortController();
         const controller = activeController;
 
+        // Priority: Current active editor (if file) > previously selected target
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor && activeEditor.document.uri.scheme === 'file') {
+            this._targetDocument = activeEditor.document;
+        }
+        
         const doc = this._targetDocument;
         const pMode = this._context.globalState.get<string>('persistenceMode', 'persistent');
 
@@ -357,13 +387,14 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
 
     private _syncState() {
         const pMode = this._context.globalState.get<string>('persistenceMode', 'persistent');
+        const autoMode = this._context.globalState.get<boolean>('autoMode', false);
         const currentFile = this._targetDocument
             ? path.basename(this._targetDocument.fileName)
             : undefined;
         const fullPath = this._targetDocument
             ? this._targetDocument.fileName
             : undefined;
-        this.postMessageToWebview({ type: 'syncState', pMode, currentFile, fullPath });
+        this.postMessageToWebview({ type: 'syncState', pMode, autoMode, currentFile, fullPath });
     }
 
     private _handlePipelineError(error: any) {

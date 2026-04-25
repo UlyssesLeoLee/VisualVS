@@ -172,6 +172,31 @@
             box-shadow: 0 0 6px var(--accent);
         }
 
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            transition: color 0.2s;
+            margin-left: 4px;
+            border-left: 1px solid var(--border);
+            padding-left: 8px;
+        }
+        .checkbox-label:hover { color: var(--text-main); }
+        .checkbox-label input { display: none; }
+        .checkbox-custom {
+            width: 10px; height: 10px;
+            border-radius: 2px;
+            border: 1px solid var(--text-dim);
+            display: inline-block;
+            position: relative;
+        }
+        .checkbox-label input:checked + .checkbox-custom {
+            background: var(--accent);
+            border-color: var(--accent);
+            box-shadow: 0 0 6px var(--accent);
+        }
+
         #mg-status-bar {
             display: flex;
             align-items: center;
@@ -569,6 +594,10 @@
                         <input type="radio" name="p-mode" value="volatile" onchange="updatePMode('volatile')">
                         <span class="radio-custom"></span> Del
                     </label>
+                    <label class="checkbox-label" title="Auto-analyze on file switch">
+                        <input type="checkbox" id="chk-auto" onchange="updateAutoMode(this.checked)">
+                        <span class="checkbox-custom"></span> Auto
+                    </label>
                 </div>
                 <button id="btn-analyze" onclick="handleAnalyze()">Analyze</button>
                 <button id="btn-clean" onclick="handleClean()">Clean</button>
@@ -758,6 +787,10 @@
 
         function updatePMode(mode) {
             vscode.postMessage({ type: 'updatePMode', mode });
+        }
+
+        function updateAutoMode(enabled) {
+            vscode.postMessage({ type: 'updateAutoMode', enabled });
         }
 
         function testMG() {
@@ -980,6 +1013,11 @@
                 if (event.data.pMode) {
                     const radio = document.querySelector(`input[name="p-mode"][value="${event.data.pMode}"]`);
                     if (radio) radio.checked = true;
+                }
+
+                if (event.data.autoMode !== undefined) {
+                    const chk = document.getElementById('chk-auto');
+                    if (chk) chk.checked = !!event.data.autoMode;
                 }
             }
 
