@@ -908,12 +908,27 @@
             try {
                 if (typeof orb.data.setDefaultStyle === 'function') {
                     orb.data.setDefaultStyle({
-                        getNodeStyle: (node) => {
-                            const mainColor = getColor(node.id);
+                        getNodeStyle: (node) =>
+                        {
+                            // Use the semantic type for color consistency across files
+                            const nodeType = (node.data && node.data.labels && node.data.labels[0])
+                                || (node.data && node.data.label)
+                                || 'Node';
+                            const mainColor = getColor(nodeType);
+
+                            // Priority: name property > label > id
+                            const d = node.data || {};
+                            const displayName = d.name
+                                || d.properties?.name
+                                || (typeof d.label === 'string' ? d.label : null)
+                                || (typeof d.id === 'string' ? d.id.slice(0, 12) : String(d.id || '?'));
+                            const typeTag = (d.labels && d.labels[0]) || '';
+                            const fullLabel = typeTag ? `${displayName} [${typeTag}]` : displayName;
+
                             return {
                                 size: 10,
                                 color: '#1a1f2e',
-                                label: (node && node.data && node.data.label) || '',
+                                label: fullLabel,
                                 labelColor: '#e0e0e0',
                                 fontSize: 3.5,
                                 borderColor: mainColor,
@@ -1276,13 +1291,21 @@
                 data.nodes.forEach(n => {
                     const el = document.createElement('div');
                     el.className = 'text-view-item';
-                    const color = getColor(n.id);
+                    // Match Graph View: color by node type, not raw ID
+                    const nodeType = (n.labels && n.labels[0]) || n.label || 'Node';
+                    const color = getColor(nodeType);
                     el.style.borderLeft = `4px solid ${color}`;
-                    
+
+                    // Display name from properties (same priority as Graph View)
+                    const displayName = (n.properties && n.properties.name)
+                        || (typeof n.label === 'string' ? n.label : null)
+                        || n.id;
+                    const typeTag = (n.labels && n.labels[0]) || '';
+
                     const props = Object.entries(n.properties || {})
                         .map(([k, v]) => `<span style="color:#aaa">${k}:</span> <span style="color:#e5c07b">${JSON.stringify(v)}</span>`)
                         .join('<br>');
-                    el.innerHTML = `<strong style="color:${color}">${n.label}</strong> <span style="color:var(--text-dim)">(ID: ${n.id})</span><br>${props}`;
+                    el.innerHTML = `<strong style="color:${color}">${displayName}</strong>${typeTag ? ` <span style="color:var(--text-dim);font-size:0.8em">[${typeTag}]</span>` : ''}<br>${props}`;
                     nodesSection.appendChild(el);
                 });
                 textView.appendChild(nodesSection);

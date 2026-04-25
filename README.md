@@ -1,7 +1,7 @@
 # VisualVS - AI-Driven Code Topology & Insight Visualizer
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE.txt)
-[![VisualVS Version](https://img.shields.io/badge/version-0.4.15-blueviolet.svg)](package.json)
+[![VisualVS Version](https://img.shields.io/badge/version-0.4.16-blueviolet.svg)](package.json)
 
 **VisualVS** 是一款专为架构师和高级开发人员打造照的 VS Code 深度洞察工具。它将 **LLM (大语言模型)**、**LangChain** 和 **Memgraph 属性图数据库** 完美融合，通过高颜值的霓虹风格拓扑图，将枯燥的代码逻辑转化为可感知的视觉资产。
 
