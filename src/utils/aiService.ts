@@ -1,100 +1,150 @@
 /**
  * @module aiService
- * @description OpenAI-compatible HTTP client for Cypher graph generation.
- *   Implements exponential-backoff retry for rate-limit and server errors.
- *
- * @cypher-manifest
- * // ── Module node ───────────────────────────────────────────────────────────
- * MERGE (:Module {name: 'aiService', path: 'src/utils/aiService.ts', layer: 'util'})
- * MERGE (:Module {name: 'aiService'})-[:IMPORTS]->(:Module {name: 'pipeline'})
- * // ── Class & method nodes ───────────────────────────────────────────────────
- * MERGE (:Class    {name: 'AIService',      module: 'aiService'})
- * MERGE (:Method   {name: 'generateCypher', module: 'aiService', class: 'AIService', static: true})
- * // ── Containment ────────────────────────────────────────────────────────────
- * MERGE (:Module {name: 'aiService'})-[:CONTAINS]->(:Class  {name: 'AIService'})
- * MERGE (:Class  {name: 'AIService'}) -[:CONTAINS]->(:Method {name: 'generateCypher'})
- * // ── Relationships ──────────────────────────────────────────────────────────
- * MERGE (:Method {name: 'generateCypher'})-[:READS {field: 'code'}]->(:Interface {name: 'PipelineContext'})
- * MERGE (:Method {name: 'generateCypher'})-[:READS {field: 'astOutline'}]->(:Interface {name: 'PipelineContext'})
- * MERGE (:Method {name: 'generateCypher'})-[:READS {field: 'fileScopeHash'}]->(:Interface {name: 'PipelineContext'})
- * MERGE (:Method {name: 'generateCypher'})-[:CALLS]->(:Lib {name: 'axios', type: 'http_client'})
- * MERGE (:Class  {name: 'AIGeneratorPlugin'})-[:CALLS]->(:Method {name: 'generateCypher'})
+ * @description Optimized LangChain client for Cypher generation.
+ *   Uses LangChain's JsonOutputParser for robust schema extraction without the 
+ *   heavy overhead of Tool Calling (withStructuredOutput).
  */
 
-import axios from 'axios';
-import * as vscode from 'vscode';
+import { ChatOpenAI } from '@langchain/openai';
+import { ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/prompts';
+import { JsonOutputParser } from '@langchain/core/output_parsers';
 import { PipelineContext } from '../core/pipeline';
 
-export class AIService {
-    static async generateCypher(context: PipelineContext, onProgress: (msg: string) => void): Promise<string> {
-        const endpoint = context.config.get<string>('ai.endpoint') || '';
-        const apiKey = context.config.get<string>('ai.apiKey') || '';
-        const model = context.config.get<string>('ai.model') || 'gpt-4';
+export interface CypherGenerationResult {
+    thoughts: string[];
+    writeCypher: string;
+    fetchCypher: string;
+}
 
-        const outlineStr = context.astOutline ? `\nRefer to this AST outline to ground your analysis:\n${context.astOutline}\n` : '';
+const SYSTEM_TEMPLATE = 'You are a code topology expert. You only output valid JSON representing Cypher queries.';
 
-        const prompt = `Analyze the following source code and extract the call graph.
-Return ONLY valid Cypher statements for Memgraph. No explanation, no markdown fences.
-Use labels :Function and relationship :CALLS.
-Every node MUST have property fileScope: '${context.fileScopeHash}'.
-${context.astOutline ? `AST Outline:\n${context.astOutline}\n` : ''}
+const HUMAN_TEMPLATE = 
+`Analyze the following source code and extract the code topology (call graph, dependencies).
+{format_instructions}
+
+Graph Modeling Rules:
+1. "thoughts": Step-by-step reasoning (e.g. "Identified class A", "Function B calls C"). Must be the first field in JSON.
+2. "writeCypher": A single string of Cypher statements to ingest the graph.
+   - Use MERGE instead of CREATE to prevent duplicate nodes.
+   - Every node MUST include the property fileScope: "{fileScopeHash}".
+   - Use standard labels like :Class, :Function, :Variable.
+   - Use standard relationship types like :CALLS, :DEFINES, :DEPENDS_ON.
+   - Always use SINGLE QUOTES for string literal values in Cypher to avoid JSON escaping conflicts.
+   - Separate multiple MERGE statements with spaces.
+3. "fetchCypher": A Cypher MATCH query to retrieve exactly the ingested nodes and edges, filtered by fileScope: "{fileScopeHash}".
+
+Example JSON Output:
+{{
+  "thoughts": ["Analyzing...", "Found class Parser and function parse().", "Generating Cypher..."],
+  "writeCypher": "MERGE (c:Class {{name:'Parser', fileScope:'{fileScopeHash}'}}) MERGE (f:Function {{name:'parse', fileScope:'{fileScopeHash}'}}) MERGE (c)-[:DEFINES]->(f)",
+  "fetchCypher": "MATCH (n {{fileScope:'{fileScopeHash}'}}) OPTIONAL MATCH (n)-[r]->(m {{fileScope:'{fileScopeHash}'}}) RETURN n, r, m"
+}}
+
+{astSection}
 Code:
-${context.code.slice(0, 8000)}`;
-// Truncate code to 8000 chars to avoid hitting context limits
+{code}`;
 
-        const maxRetries = 3;
-        let attempt = 0;
-        let baseDelay = 1000; // 1 second
+export class AIService {
+    private static buildModel(endpoint: string, apiKey: string, modelName: string): ChatOpenAI {
+        const baseURL = endpoint.replace(/\/chat\/completions\/?$/, '');
+        const prevKey = process.env.OPENAI_API_KEY;
+        process.env.OPENAI_API_KEY = apiKey || 'sk-placeholder';
 
-        while (attempt < maxRetries) {
-            try {
-                if (attempt > 0) {
-                    onProgress(`Retrying AI Service (Attempt ${attempt + 1}/${maxRetries})...`);
-                }
-                const response = await axios.post(endpoint, {
-                    model: model,
-                    messages: [
-                        { role: "system", content: "You are a code topology expert. Output only Cypher statements, no markdown, no explanation." },
-                        { role: "user", content: prompt }
-                    ],
-                    temperature: 0.1,
-                    max_tokens: 2048
-                }, {
-                    headers: {
-                        'Authorization': `Bearer ${apiKey}`,
-                        'Content-Type': 'application/json'
-                    },
-                    timeout: 120000 // 120s for large models like Qwen 122B
-                });
+        const model = new ChatOpenAI({
+            modelName,
+            openAIApiKey: apiKey || 'sk-placeholder',
+            configuration: {
+                baseURL,
+                defaultHeaders: apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {},
+            },
+            temperature: 0.1,
+            maxTokens: 2048,
+            timeout: 90_000,
+        });
 
-                if (typeof response.data === 'string' && response.data.trim().toLowerCase().startsWith('<!doctype html>')) {
-                    throw new Error(`The AI Endpoint returned an HTML Webpage instead of a JSON API response!\n\n💡 FIX: You entered the URL of a Browser UI (like NextChat/Ollama frontend) instead of the actual API route.\n\nPlease go to settings and append the correct API path to your Endpoint.\n• For ChatGPT-Next-Web: your-url/api/openai/v1/chat/completions\n• For Ollama API: your-url/v1/chat/completions\n• For OpenAI native: https://api.openai.com/v1/chat/completions`);
-                }
+        if (prevKey === undefined) delete process.env.OPENAI_API_KEY;
+        else process.env.OPENAI_API_KEY = prevKey;
 
-                if (!response.data || !response.data.choices || response.data.choices.length === 0) {
-                    const apiError = response.data?.error?.message || JSON.stringify(response.data);
-                    throw new Error(`API returned no JSON choices. Details: ${apiError}`);
-                }
+        return model;
+    }
 
-                let cypher = response.data.choices[0].message.content;
-                cypher = cypher.replace(/```cypher/g, '').replace(/```/g, '').trim();
-                return cypher;
-            } catch (error: any) {
-                attempt++;
-                const isRateLimit = error.response?.status === 429;
-                const isServerError = error.response?.status >= 500;
-                const isTimeout = error.code === 'ECONNABORTED';
-                
-                if (attempt >= maxRetries || (!isRateLimit && !isServerError && !isTimeout)) {
-                    const detail = error.response?.data?.error?.message || error.message;
-                    throw new Error(`AI Request failed after ${attempt} attempts: ${detail}`);
-                }
-                
-                const delayMs = baseDelay * Math.pow(2, attempt - 1);
-                onProgress(`Network issue (${error.message}). Waiting ${delayMs}ms before retry...`);
-                await new Promise(resolve => setTimeout(resolve, delayMs));
-            }
+    static async generateCypher(
+        context: PipelineContext,
+        onProgress: (msg: string) => void,
+    ): Promise<CypherGenerationResult> {
+        const endpoint  = context.config.get<string>('ai.endpoint') || 'https://api.openai.com/v1/chat/completions';
+        const apiKey    = context.config.get<string>('ai.apiKey')   || '';
+        const modelName = context.config.get<string>('ai.model')    || 'gpt-4';
+
+        if (!apiKey && endpoint.includes('api.openai.com')) {
+            throw new Error('API Key missing for OpenAI endpoint.');
         }
-        throw new Error('AI Generation failed');
+
+        const astSection = context.astOutline ? `AST Outline:\n${context.astOutline}\n` : '';
+        const model = AIService.buildModel(endpoint, apiKey, modelName);
+        
+        // Use LangChain's built-in robust JSON parser
+        const parser = new JsonOutputParser<CypherGenerationResult>();
+        const formatInstructions = parser.getFormatInstructions();
+
+        const prompt = ChatPromptTemplate.fromMessages([
+            SystemMessagePromptTemplate.fromTemplate(SYSTEM_TEMPLATE),
+            HumanMessagePromptTemplate.fromTemplate(HUMAN_TEMPLATE),
+        ]);
+
+        const chain = prompt.pipe(model).pipe(parser);
+
+        try {
+            onProgress(`**开始** AI request → ${endpoint} (model=${modelName})`);
+            const startedAt = Date.now();
+
+            const stream = await chain.stream({
+                fileScopeHash: context.fileScopeHash,
+                format_instructions: formatInstructions,
+                astSection,
+                code: context.code.slice(0, 10000),
+            }, context.abortSignal ? { signal: context.abortSignal } : undefined);
+
+            let lastThoughtsCount = 0;
+            let chunkCount = 0;
+            let finalResult: Partial<CypherGenerationResult> = {};
+
+            for await (const chunk of stream) {
+                chunkCount++;
+                finalResult = chunk;
+                if (chunk.thoughts && Array.isArray(chunk.thoughts)) {
+                    if (chunk.thoughts.length > lastThoughtsCount) {
+                        const newThought = chunk.thoughts[chunk.thoughts.length - 1];
+                        if (newThought) {
+                            onProgress(`🤔 ${newThought}`);
+                        }
+                        lastThoughtsCount = chunk.thoughts.length;
+                    }
+                }
+            }
+
+            const elapsed = Date.now() - startedAt;
+            const normalize = (val: any) => Array.isArray(val) ? val.join(';\n') : (val || '');
+            const writeCypher = normalize(finalResult.writeCypher);
+            const fetchCypher = normalize(finalResult.fetchCypher)
+                || `MATCH (n {fileScope: '${context.fileScopeHash}'}) OPTIONAL MATCH (n)-[r]->(m {fileScope: '${context.fileScopeHash}'}) RETURN n, r, m`;
+
+            if (!writeCypher) {
+                throw new Error('AI returned no writeCypher (empty response).');
+            }
+
+            onProgress(`**完成** AI response in ${elapsed}ms (chunks=${chunkCount}, writeCypher=${writeCypher.length} chars)`);
+
+            return {
+                thoughts: finalResult.thoughts || [],
+                writeCypher,
+                fetchCypher,
+            };
+
+        } catch (error: any) {
+            if (error?.name === 'AbortError') throw error;
+            console.error('JsonOutputParser failed:', error);
+            throw new Error(`AI Analysis failed: ${error.message || String(error)}`);
+        }
     }
 }

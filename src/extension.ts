@@ -50,6 +50,9 @@ import { K8sManager } from './utils/k8sManager';
 import { MemgraphClient } from './utils/memgraphClient';
 
 let sidebarProvider: VisualVSSidebarProvider;
+let activeController: AbortController | undefined;
+export const vvsOutputChannel = vscode.window.createOutputChannel('VisualVS Log');
+
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('VisualVS is now active!');
@@ -90,35 +93,48 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    const toggleCmd = vscode.commands.registerCommand('visualvs.toggleWindow', () => {
-        vscode.commands.executeCommand('workbench.view.extension.visualvs-explorer');
+    const toggleCmd = vscode.commands.registerCommand('visualvs.toggleWindow', async () => {
+        // Try to focus the specific webview view first.
+        // If the panel container is not open, this will open it and focus the view.
+        try {
+            await vscode.commands.executeCommand('visualvs-sidebar.focus');
+        } catch {
+            // Fallback: open the panel container
+            await vscode.commands.executeCommand('workbench.view.extension.visualvs-panel');
+        }
     });
 
     // Create a StatusBarItem to act as the toggle button
     const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    statusBarItem.text = "$(type-hierarchy-sub) VVS";
-    statusBarItem.tooltip = "Toggle VVS Control Window";
+    statusBarItem.text = "$(sparkle) VisualVS";
+    statusBarItem.tooltip = "Start VisualVS Analysis";
     statusBarItem.command = 'visualvs.toggleWindow';
     statusBarItem.show();
 
     const updateVsixCmd = vscode.commands.registerCommand('visualvs.updateFromVsix', async () => {
-        const uris = await vscode.workspace.findFiles('visualvs-*.vsix');
-        if (uris.length === 0) {
-            vscode.window.showErrorMessage('No visualvs-*.vsix files found in the workspace.');
-            return;
-        }
-
-        // Sort by modified time to get the latest vsix
-        uris.sort((a, b) => {
-            const statA = fs.statSync(a.fsPath);
-            const statB = fs.statSync(b.fsPath);
-            return statB.mtime.getTime() - statA.mtime.getTime();
+        const uris = await vscode.window.showOpenDialog({
+            canSelectMany: false,
+            openLabel: 'Install VSIX',
+            filters: {
+                'VSIX Extensions': ['vsix']
+            },
+            title: 'Select VisualVS VSIX File to Install'
         });
 
-        const latestVsix = uris[0];
+        if (!uris || uris.length === 0) {
+            return; // User canceled
+        }
+
+        const selectedVsix = uris[0];
         try {
-            await vscode.commands.executeCommand('workbench.extensions.installExtension', latestVsix);
-            vscode.window.showInformationMessage(`Successfully installed latest plugin: ${path.basename(latestVsix.fsPath)}`);
+            await vscode.commands.executeCommand('workbench.extensions.installExtension', selectedVsix);
+            const action = await vscode.window.showInformationMessage(
+                `Successfully installed plugin: ${path.basename(selectedVsix.fsPath)}. A window reload is required to apply the update.`,
+                'Reload Window'
+            );
+            if (action === 'Reload Window') {
+                vscode.commands.executeCommand('workbench.action.reloadWindow');
+            }
         } catch (err: any) {
             vscode.window.showErrorMessage(`Failed to install VSIX: ${err.message}`);
         }
@@ -147,9 +163,11 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
     public setTargetDocument(doc: vscode.TextDocument) {
         this._targetDocument = doc;
         const fileName = path.basename(doc.fileName);
+        const fullPath = doc.fileName;
         this.postMessageToWebview({
             type: 'updateContext',
-            currentFile: fileName
+            currentFile: fileName,
+            fullPath: fullPath
         });
     }
 
@@ -167,7 +185,10 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
         try {
             webviewView.webview.options = {
                 enableScripts: true,
-                localResourceRoots: [this._extensionUri]
+                localResourceRoots: [
+                    this._extensionUri,
+                    vscode.Uri.file(path.join(this._extensionUri.fsPath, 'src', 'webview', 'lib'))
+                ]
             };
 
             webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
@@ -184,6 +205,9 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
                     case 'visualize':
                         await this.runAnalysis();
                         break;
+                    case 'abort':
+                        activeController?.abort();
+                        break;
                     case 'openSettings':
                         vscode.commands.executeCommand('workbench.action.openSettings', 'visualvs');
                         break;
@@ -196,7 +220,11 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
                         }).then(uris => {
                             if (uris?.[0]) {
                                 vscode.workspace.openTextDocument(uris[0]).then(doc => {
-                                    this.setTargetDocument(doc);
+                                    // Actually show the document in the editor so `onDidChangeActiveTextEditor`
+                                    // doesn't override our selection when focus returns from the dialog.
+                                    vscode.window.showTextDocument(doc, { preview: false }).then(() => {
+                                        this.setTargetDocument(doc);
+                                    });
                                 });
                             }
                         });
@@ -209,9 +237,13 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
                         break;
                     case 'ready':
                         this._syncState();
+                        this._handleTestConnection(true); // Silent startup check
                         break;
                     case 'testMGConnection':
                         this._handleTestConnection();
+                        break;
+                    case 'runCustomQuery':
+                        this._handleRunCustomQuery(message.cypher);
                         break;
                 }
             });
@@ -225,6 +257,11 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
     // -------------------------------------------------------------------------
 
     public async runAnalysis() {
+        // Cancel any in-flight analysis before starting a new one
+        activeController?.abort();
+        activeController = new AbortController();
+        const controller = activeController;
+
         const doc = this._targetDocument;
         const pMode = this._context.globalState.get<string>('persistenceMode', 'persistent');
 
@@ -261,7 +298,7 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
         try {
             await pipeline.run(ctx, (msg, stage) => {
                 this.postMessageToWebview({ type: 'progress', message: msg, stage });
-            });
+            }, controller);
 
             // ctx.graphData is populated by GraphFetchPlugin
             this.postMessageToWebview({
@@ -269,10 +306,22 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
                 data: ctx.graphData ?? { nodes: [], edges: [] },
                 configError: ctx.configError,
                 currentFile: ctx.fileName ? path.basename(ctx.fileName) : undefined,
+                fullPath: ctx.fileName ? ctx.fileName : undefined,
+                fetchCypher: ctx.fetchCypher,
                 pMode
             });
         } catch (error: any) {
+            if (error?.name === 'AbortError') {
+                // User clicked Stop — silently reset the UI
+                this.postMessageToWebview({ type: 'aborted' });
+                return;
+            }
             this._handlePipelineError(error);
+        } finally {
+            // Release reference; GC can collect the controller
+            if (activeController === controller) {
+                activeController = undefined;
+            }
         }
     }
 
@@ -311,7 +360,10 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
         const currentFile = this._targetDocument
             ? path.basename(this._targetDocument.fileName)
             : undefined;
-        this.postMessageToWebview({ type: 'syncState', pMode, currentFile });
+        const fullPath = this._targetDocument
+            ? this._targetDocument.fileName
+            : undefined;
+        this.postMessageToWebview({ type: 'syncState', pMode, currentFile, fullPath });
     }
 
     private _handlePipelineError(error: any) {
@@ -378,7 +430,125 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
         `;
     }
 
-    private async _handleTestConnection() {
+    private async _handleTestConnection(silent: boolean = false) {
+        const config = vscode.workspace.getConfiguration('visualvs');
+        const host = config.get<string>('memgraph.host') || 'localhost';
+        const port = config.get<number>('memgraph.port') || 37788;
+        const user = config.get<string>('visualvs.memgraph.username');
+        const pass = config.get<string>('visualvs.memgraph.password');
+
+        if (!silent) {
+            vvsOutputChannel.appendLine(`\n[Test Connection] Starting test for Memgraph at bolt://${host}:${port}`);
+            vvsOutputChannel.appendLine(`[Test Connection] Auth: user=${user ? `'${user}'` : 'None'}, password=${pass ? '***' : 'None'}`);
+        }
+
+        // Surface a single line into BOTH the OutputChannel and the webview's
+        // Pipeline Log so the user can see why the welcome node didn't render.
+        const logToPanel = (message: string, stage: 'pre' | 'main' | 'post' | 'error' = 'pre') => {
+            vvsOutputChannel.appendLine(`[Welcome] ${message}`);
+            this.postMessageToWebview({ type: 'progress', message: `[Welcome] ${message}`, stage });
+        };
+
+        const runCheck = async () => {
+            const client = new MemgraphClient(host, port, user, pass);
+            const startTime = Date.now();
+            logToPanel(`Connecting to Memgraph at bolt://${host}:${port}…`, 'pre');
+            try {
+                const status = await client.checkStatus();
+                const duration = Date.now() - startTime;
+
+                if (status.connected) {
+                    logToPanel(`Connected in ${duration}ms (existing node count: ${status.nodeCount}).`, 'post');
+                    if (!silent) {
+                        vscode.window.showInformationMessage(`Memgraph connected successfully in ${duration}ms!`);
+                    }
+
+                    try {
+                        logToPanel('Creating welcome node (MERGE :SystemStatus)…', 'pre');
+                        await client.executeCypher(`
+                            MERGE (n:SystemStatus {id: 'visualvs_ready'})
+                            SET n.name = 'VisualVS Ready',
+                                n.status = 'Online',
+                                n.message = 'Click Analyze to visualize your code',
+                                n.timestamp = timestamp()
+                        `);
+
+                        logToPanel('Fetching welcome node (MATCH :SystemStatus)…', 'main');
+                        const graphData = await client.executeGraphQuery(`
+                            MATCH (n:SystemStatus {id: 'visualvs_ready'}) RETURN n
+                        `);
+
+                        if (!graphData || !graphData.nodes || graphData.nodes.length === 0) {
+                            const why = `Welcome node not returned by MATCH — Memgraph reachable but query produced 0 nodes. Likely cause: prior DETACH DELETE wiped the database between MERGE and MATCH, or this Memgraph instance does not persist nodes.`;
+                            logToPanel(why, 'error');
+                            this.postMessageToWebview({ type: 'error', configError: why });
+                        } else {
+                            this.postMessageToWebview({ type: 'setData', data: graphData, isWelcome: true });
+                            logToPanel(`Welcome node rendered (${graphData.nodes.length} node, ${graphData.edges.length} edges).`, 'post');
+                            this.postMessageToWebview({
+                                type: 'progress',
+                                message: '✅ Connected to Memgraph. Ready to analyze.',
+                                stage: 'post'
+                            });
+                        }
+                    } catch (e: any) {
+                        const reason = e?.stack || e?.message || String(e);
+                        const why = `Failed to create / fetch welcome node: ${reason}`;
+                        logToPanel(why, 'error');
+                        this.postMessageToWebview({ type: 'error', configError: why });
+                    }
+                } else {
+                    const why = `Memgraph not reachable at bolt://${host}:${port} after ${duration}ms. ${status.error || ''}`.trim();
+                    logToPanel(why, 'error');
+                    this.postMessageToWebview({ type: 'error', configError: why });
+                    if (!silent) {
+                        vscode.window.showErrorMessage(`Memgraph connection failed. See 'VisualVS Log' output for details.`);
+                        vvsOutputChannel.show(true);
+                    }
+                }
+
+                this.postMessageToWebview({
+                    type: 'mgStatus',
+                    connected: status.connected,
+                    nodeCount: status.nodeCount,
+                    error: status.error
+                });
+            } catch (err: any) {
+                const duration = Date.now() - startTime;
+                const reason = err?.stack || err?.message || String(err);
+                const why = `Unexpected exception while contacting Memgraph after ${duration}ms: ${reason}`;
+                logToPanel(why, 'error');
+                this.postMessageToWebview({ type: 'error', configError: why });
+                if (!silent) {
+                    vscode.window.showErrorMessage(`Memgraph connection crashed. See 'VisualVS Log' output for details.`);
+                    vvsOutputChannel.show(true);
+                }
+                this.postMessageToWebview({
+                    type: 'mgStatus',
+                    connected: false,
+                    nodeCount: 0,
+                    error: err.message || String(err)
+                });
+            } finally {
+                await client.close();
+                logToPanel('Memgraph client closed.', 'post');
+            }
+        };
+
+        if (silent) {
+            await runCheck();
+        } else {
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: `VisualVS: Testing Memgraph on ${host}:${port}`,
+                cancellable: false
+            }, async () => {
+                await runCheck();
+            });
+        }
+    }
+
+    private async _handleRunCustomQuery(cypher: string) {
         const config = vscode.workspace.getConfiguration('visualvs');
         const host = config.get<string>('memgraph.host') || 'localhost';
         const port = config.get<number>('memgraph.port') || 37788;
@@ -387,13 +557,21 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
 
         const client = new MemgraphClient(host, port, user, pass);
         try {
-            const status = await client.checkStatus();
+            vvsOutputChannel.appendLine(`\n[Custom Query] Executing:\n${cypher}`);
+            const data = await client.executeGraphQuery(cypher);
+            vvsOutputChannel.appendLine(`[Custom Query] Success: returned ${data.nodes.length} nodes, ${data.edges.length} edges.`);
+            
             this.postMessageToWebview({
-                type: 'mgStatus',
-                connected: status.connected,
-                nodeCount: status.nodeCount,
-                error: status.error
+                type: 'setData',
+                data: data,
+                message: 'Custom query executed successfully',
+                stage: 'done'
             });
+            this.postMessageToWebview({ type: 'progress', stage: 'done' });
+        } catch (err: any) {
+            vvsOutputChannel.appendLine(`[Custom Query] ERROR:\n${err.message || String(err)}`);
+            vscode.window.showErrorMessage(`Custom Query failed: ${err.message || String(err)}`);
+            this.postMessageToWebview({ type: 'progress', stage: 'done' });
         } finally {
             await client.close();
         }
@@ -401,7 +579,13 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
 
     private _getHtmlForWebview(webview: vscode.Webview): string {
         const htmlPath = path.join(this._extensionUri.fsPath, 'src', 'webview', 'index.html');
-        return fs.readFileSync(htmlPath, 'utf8');
+        const libDir = path.join(this._extensionUri.fsPath, 'src', 'webview', 'lib');
+        const orbUri = webview.asWebviewUri(vscode.Uri.file(path.join(libDir, 'orb.js')));
+        const dagreUri = webview.asWebviewUri(vscode.Uri.file(path.join(libDir, 'dagre.min.js')));
+        let html = fs.readFileSync(htmlPath, 'utf8');
+        html = html.replace('__ORB_URI__', orbUri.toString());
+        html = html.replace('__DAGRE_URI__', dagreUri.toString());
+        return html;
     }
 }
 

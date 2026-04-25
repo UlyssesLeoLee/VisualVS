@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Test Orb</title>
+    <script src="./lib/orb.js"></script>
+    <style>
+        #viewport {
+            width: 800px;
+            height: 600px;
+            border: 1px solid red;
+        }
+    </style>
+</head>
+<body>
+    <div id="viewport"></div>
+    <script>
+        console.log('Orb variable:', typeof Orb, Orb);
+        let orb = null;
+        try {
+            const container = document.getElementById('viewport');
+            orb = typeof Orb.Orb === 'function' ? new Orb.Orb(container) : new Orb(container);
+            orb.data.setup({ 
+                nodes: [{ id: 'test_node_001', data: { label: 'Initial Node' }, x: 0, y: 0 }], 
+                edges: [] 
+            });
+            orb.view.render(() => orb.view.recenter());
+            console.log('Orb initialized successfully');
+            
+            // Listen to messages like index.html
+            window.addEventListener('message', event => {
+                if (event.data.type === 'setData') {
+                    console.log('Received setData message!', event.data.data);
+                    orb.data.setup(event.data.data);
+                    orb.view.render(() => orb.view.recenter());
+                    console.log('Rendered setData successfully');
+                }
+            });
+            
+            // Simulate extension sending data after 1 second
+            setTimeout(() => {
+                console.log('Simulating extension sending setData...');
+                window.postMessage({
+                    type: 'setData',
+                    data: {
+                        nodes: [{ id: 'visualvs_ready', data: { label: 'VisualVS Ready', properties: { status: 'Online' } } }],
+                        edges: []
+                    }
+                }, '*');
+            }, 1000);
+            
+        } catch (e) {
+            console.error('Failed to init Orb:', e);
+        }
+    </script>
+</body>
+</html>

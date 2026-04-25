@@ -3,6 +3,7 @@
 out/test/**
 src/**
 !src/webview/index.html
+!src/webview/lib/**
 .gitignore
 .vscodeignore
 tsconfig.json

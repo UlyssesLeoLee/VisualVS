@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "Bash(npx --yes vsce package --out /e/VisualVS/visualvs-0.3.37.vsix)",
+      "Bash(unzip -l /e/VisualVS/visualvs-0.3.37.vsix)",
+      "Bash(node --test tests/pipeline.test.cjs)",
+      "Bash(node --test tests/ai-service.test.cjs)",
+      "Bash(node --test tests/webview-render.test.cjs)",
+      "Bash(node --test tests/integration.test.cjs)",
+      "Bash(node --test tests/*.test.cjs)",
+      "Bash(unzip -p /e/VisualVS/visualvs-0.3.37.vsix extension/src/webview/index.html)",
+      "Bash(unzip -p /e/VisualVS/visualvs-0.3.39.vsix extension/src/webview/index.html)",
+      "Bash(unzip -p /e/VisualVS/visualvs-0.3.39.vsix extension/out/extension.js)",
+      "Bash(unzip -l /e/VisualVS/visualvs-0.3.39.vsix)",
+      "Bash(npx --yes vsce package --out /e/VisualVS/visualvs-0.3.39.vsix)"
+    ]
+  }
+}

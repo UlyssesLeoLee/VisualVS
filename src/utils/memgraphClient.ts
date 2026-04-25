@@ -51,7 +51,12 @@ export class MemgraphClient {
         this.driver = neo4j.driver(
             `bolt://${host}:${port}`, 
             auth,
-            { disableLosslessIntegers: true, encrypted: 'ENCRYPTION_OFF' } as any
+            { 
+                disableLosslessIntegers: true, 
+                encrypted: 'ENCRYPTION_OFF',
+                connectionTimeout: 3000,
+                connectionAcquisitionTimeout: 3000
+            } as any
         );
     }
 
@@ -166,16 +171,80 @@ export class MemgraphClient {
         }
     }
 
+    async executeGraphQuery(cypher: string): Promise<{ nodes: any[], edges: any[] }> {
+        const session = this.driver.session();
+        try {
+            const result = await session.writeTransaction((tx: any) => tx.run(cypher));
+            
+            const nodesMap = new Map();
+            const edgesMap = new Map();
+
+            const processNode = (node: any) => {
+                if (!node || !node.labels) return; // not a node
+                const id = (node.elementId !== undefined) ? String(node.elementId) : (node.identity ? node.identity.toString() : null);
+                if (!id) return;
+                nodesMap.set(id, { 
+                    id: id, 
+                    label: node.properties.name || (node.labels && node.labels[0]) || 'Node',
+                    properties: node.properties,
+                    labels: node.labels
+                });
+            };
+
+            const processEdge = (edge: any) => {
+                if (!edge || !edge.type) return; // not an edge
+                const id = (edge.elementId !== undefined) ? String(edge.elementId) : (edge.identity ? edge.identity.toString() : null);
+                if (!id) return;
+                const start = (edge.startNodeElementId !== undefined) ? String(edge.startNodeElementId) : (edge.start ? edge.start.toString() : null);
+                const end = (edge.endNodeElementId !== undefined) ? String(edge.endNodeElementId) : (edge.end ? edge.end.toString() : null);
+                
+                edgesMap.set(id, {
+                    id: id,
+                    start: start,
+                    end: end,
+                    label: edge.type,
+                    properties: edge.properties
+                });
+            };
+
+            result.records.forEach((record: any) => {
+                record.keys.forEach((key: string) => {
+                    const val = record.get(key);
+                    if (!val) return;
+                    
+                    // If it's an array (like a path or list of nodes), iterate
+                    if (Array.isArray(val)) {
+                        val.forEach(item => {
+                            if (item && item.labels) processNode(item);
+                            if (item && item.type) processEdge(item);
+                        });
+                    } else {
+                        if (val.labels) processNode(val);
+                        if (val.type) processEdge(val);
+                    }
+                });
+            });
+
+            return {
+                nodes: Array.from(nodesMap.values()),
+                edges: Array.from(edgesMap.values())
+            };
+        } finally {
+            await session.close();
+        }
+    }
+
     async checkStatus(): Promise<{ connected: boolean; nodeCount: number; error?: string }> {
         const session = this.driver.session();
         try {
-            const result = await session.readTransaction((tx: any) => 
-                tx.run('MATCH (n) RETURN count(n) as cnt')
-            );
+            const result = await Promise.race([
+                session.readTransaction((tx: any) => tx.run('MATCH (n) RETURN count(n) as cnt')),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Connection check timed out after 3000ms')), 3000))
+            ]) as any;
             const count = result.records[0].get('cnt').low ?? result.records[0].get('cnt');
             return { connected: true, nodeCount: count };
         } catch (err: any) {
-            return { connected: false, nodeCount: 0, error: err.message };
+            return { connected: false, nodeCount: 0, error: err.stack ? `${err.message}\n${err.stack}` : err.message };
         } finally {
             await session.close();
         }

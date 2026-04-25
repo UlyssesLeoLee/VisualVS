@@ -46,13 +46,17 @@ export interface PipelineContext {
     config: vscode.WorkspaceConfiguration;
     extensionUri: vscode.Uri;
 
+    // Abort signal — set by Pipeline.run(); plugins may check it for early exit
+    abortSignal?: AbortSignal;
+
     // Pre-processing outputs
     fileScopeHash: string;
     codeHash: string;
     astOutline?: string;
 
     // Main-processing outputs
-    cypher?: string;
+    cypher?: string;       // WRITE Cypher (MERGE/CREATE) — consumed by MemgraphIngestPlugin
+    fetchCypher?: string;  // READ Cypher (MATCH) — sent to Webview Cypher editor after analysis
 
     // Post-processing outputs
     graphData?: { nodes: any[]; edges: any[] };
@@ -85,27 +89,51 @@ export class Pipeline {
 
     async run(
         context: PipelineContext,
-        onProgress?: ProgressReporter
+        onProgress?: ProgressReporter,
+        controller?: AbortController
     ): Promise<void> {
         const report: ProgressReporter = (msg, stage) => onProgress?.(msg, stage);
 
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: 'VisualVS Processing',
-            cancellable: false
-        }, async (progress) => {
+            cancellable: true
+        }, async (progress, token) => {
+            // Bridge VS Code cancellation token → AbortController
+            if (controller) {
+                token.onCancellationRequested(() => controller.abort());
+            }
+            // Expose signal on context so plugins can poll it directly
+            if (controller) {
+                context.abortSignal = controller.signal;
+            }
+
+            const signal = controller?.signal;
+
+            const checkAbort = () => {
+                if (signal?.aborted) {
+                    throw new DOMException('Pipeline aborted by user', 'AbortError');
+                }
+            };
+
+            report('**开始** Pipeline started', 'pre');
+
             progress.report({ message: 'Pre-processing...' });
             report('Initializing context', 'pre');
-            await this._runStage('pre', this.prePlugins, context, report);
+            checkAbort();
+            await this._runStage('pre', this.prePlugins, context, report, signal);
 
             progress.report({ message: 'Main-processing (AI Logic)...' });
             report('Generating graph data', 'main');
-            await this._runStage('main', this.mainPlugins, context, report);
+            checkAbort();
+            await this._runStage('main', this.mainPlugins, context, report, signal);
 
             progress.report({ message: 'Post-processing (Data & Visualization)...' });
             report('Ingesting & fetching data', 'post');
-            await this._runStage('post', this.postPlugins, context, report);
+            checkAbort();
+            await this._runStage('post', this.postPlugins, context, report, signal);
 
+            report('**完成** Pipeline finished', 'post');
             report('Complete', 'done');
         });
     }
@@ -118,9 +146,15 @@ export class Pipeline {
         stage: 'pre' | 'main' | 'post',
         plugins: IPlugin[],
         ctx: PipelineContext,
-        report: ProgressReporter
+        report: ProgressReporter,
+        signal?: AbortSignal
     ): Promise<void> {
         for (const plugin of plugins) {
+            // Check abort before each plugin
+            if (signal?.aborted) {
+                throw new DOMException('Pipeline aborted by user', 'AbortError');
+            }
+
             const log: Logger = (msg) => report(`[${plugin.name}] ${msg}`, stage);
 
             // --- prepare ---
@@ -129,6 +163,7 @@ export class Pipeline {
                 log('Preparing...');
                 prepareResult = await plugin.prepare(ctx, log);
             } catch (err: any) {
+                if (err?.name === 'AbortError') { throw err; }
                 throw new PluginError(plugin.name, stage, 'prepare', err);
             }
 
@@ -138,13 +173,16 @@ export class Pipeline {
             }
 
             // --- execute (with teardown in finally) ---
-            let executeError: PluginError | undefined;
+            let executeError: Error | undefined;
             try {
                 log('Executing...');
                 await plugin.execute(ctx, log);
                 log('Done.');
             } catch (err: any) {
-                executeError = new PluginError(plugin.name, stage, 'execute', err);
+                // AbortError propagates unwrapped so extension.ts can silently swallow it
+                executeError = err?.name === 'AbortError'
+                    ? err
+                    : new PluginError(plugin.name, stage, 'execute', err);
             } finally {
                 // teardown MUST run regardless of execute outcome
                 try {

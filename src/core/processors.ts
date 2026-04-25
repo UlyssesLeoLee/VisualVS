@@ -282,8 +282,10 @@ export class AIGeneratorPlugin extends BasePlugin {
 
     async execute(ctx: PipelineContext, log: Logger): Promise<void> {
         log('Requesting graph topology from AI service...');
-        ctx.cypher = await AIService.generateCypher(ctx, log);
-        log('Cypher statements generated.');
+        const result = await AIService.generateCypher(ctx, log);
+        ctx.cypher = result.writeCypher;
+        ctx.fetchCypher = result.fetchCypher;
+        log(`Cypher statements generated. Fetch query: ${result.fetchCypher ? 'Yes' : 'No'}`);
     }
 
     // teardown: no resources acquired → inherited no-op

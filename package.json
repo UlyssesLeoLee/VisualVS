@@ -2,7 +2,7 @@
   "name": "visualvs",
   "displayName": "VisualVS",
   "description": "Visualize code topology using AI and Memgraph. Source: https://github.com/UlyssesLeoLee/VisualVS",
-  "version": "0.2.16",
+  "version": "0.4.3",
   "publisher": "UlyssesLi",
   "icon": "icon.png",
   "repository": {
@@ -22,20 +22,29 @@
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
-      "secondarySideBar": [
+      "auxiliarybar": [
         {
-          "id": "visualvs-explorer",
+          "id": "visualvs-panel",
           "title": "VVS",
           "icon": "resources/view-icon.svg"
         }
       ]
     },
     "views": {
-      "visualvs-explorer": [
+      "visualvs-panel": [
         {
           "id": "visualvs-sidebar",
           "name": "VVS Topology",
           "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "visualvs.toggleWindow",
+          "group": "navigation",
+          "when": "true"
         }
       ]
     },
@@ -52,8 +61,9 @@
       },
       {
         "command": "visualvs.toggleWindow",
-        "title": "VisualVS: Toggle VVS Window",
-        "category": "VisualVS"
+        "title": "VisualVS: Toggle VVS Panel",
+        "category": "VisualVS",
+        "icon": "$(sparkle)"
       },
       {
         "command": "visualvs.updateFromVsix",
@@ -129,11 +139,12 @@
   "scripts": {
     "vscode:prepublish": "npm run bundle",
     "compile": "tsc -p ./",
-    "bundle": "npx esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
+    "bundle": "npx esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --log-level=error",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js"
+    "test": "node ./out/test/runTest.js",
+    "test:unit": "node --test tests/*.test.cjs"
   },
   "devDependencies": {
     "@types/dagre": "^0.7.48",
@@ -144,9 +155,11 @@
     "@vscode/vsce": "^3.9.1",
     "esbuild": "^0.28.0",
     "eslint": "^8.31.0",
-    "typescript": "^4.9.4"
+    "typescript": "^6.0.3"
   },
   "dependencies": {
+    "@langchain/core": "^1.1.41",
+    "@langchain/openai": "^1.4.4",
     "@memgraph/orb": "^0.2.0",
     "axios": "^1.3.4",
     "dagre": "^0.8.5",
