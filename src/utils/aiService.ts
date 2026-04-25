@@ -18,7 +18,7 @@ export interface CypherGenerationResult {
 
 const SYSTEM_TEMPLATE = 'You are a code topology expert. You only output valid JSON representing Cypher queries.';
 
-const HUMAN_TEMPLATE = 
+const HUMAN_TEMPLATE_BASE = 
 `Analyze the following source code and extract the code topology (call graph, dependencies).
 {format_instructions}
 
@@ -26,18 +26,18 @@ Graph Modeling Rules:
 1. "thoughts": Step-by-step reasoning (e.g. "Identified class A", "Function B calls C"). Must be the first field in JSON.
 2. "writeCypher": A single string of Cypher statements to ingest the graph.
    - Use MERGE instead of CREATE to prevent duplicate nodes.
-   - Every node MUST include the property fileScope: "{fileScopeHash}".
+   - Every node MUST include the property fileScope: "%FILE_SCOPE_HASH%".
    - Use standard labels like :Class, :Function, :Variable.
    - Use standard relationship types like :CALLS, :DEFINES, :DEPENDS_ON.
    - Always use SINGLE QUOTES for string literal values in Cypher to avoid JSON escaping conflicts.
    - Separate multiple MERGE statements with spaces.
-3. "fetchCypher": A Cypher MATCH query to retrieve exactly the ingested nodes and edges, filtered by fileScope: "{fileScopeHash}".
+3. "fetchCypher": A Cypher MATCH query to retrieve exactly the ingested nodes and edges, filtered by fileScope: "%FILE_SCOPE_HASH%".
 
 Example JSON Output:
 {{
   "thoughts": ["Analyzing...", "Found class Parser and function parse().", "Generating Cypher..."],
-  "writeCypher": "MERGE (c:Class {{name:'Parser', fileScope:'{fileScopeHash}'}}) MERGE (f:Function {{name:'parse', fileScope:'{fileScopeHash}'}}) MERGE (c)-[:DEFINES]->(f)",
-  "fetchCypher": "MATCH (n {{fileScope:'{fileScopeHash}'}}) OPTIONAL MATCH (n)-[r]->(m {{fileScope:'{fileScopeHash}'}}) RETURN n, r, m"
+  "writeCypher": "MERGE (c:Class {{name:'Parser', fileScope:'%FILE_SCOPE_HASH%'}}) MERGE (f:Function {{name:'parse', fileScope:'%FILE_SCOPE_HASH%'}}) MERGE (c)-[:DEFINES]->(f)",
+  "fetchCypher": "MATCH (n {{fileScope:'%FILE_SCOPE_HASH%'}}) OPTIONAL MATCH (n)-[r]->(m {{fileScope:'%FILE_SCOPE_HASH%'}}) RETURN n, r, m"
 }}
 
 {astSection}
@@ -87,19 +87,21 @@ export class AIService {
         const parser = new JsonOutputParser<CypherGenerationResult>();
         const formatInstructions = parser.getFormatInstructions();
 
+        const humanTemplate = HUMAN_TEMPLATE_BASE.replace(/%FILE_SCOPE_HASH%/g, context.fileScopeHash);
+
         const prompt = ChatPromptTemplate.fromMessages([
             SystemMessagePromptTemplate.fromTemplate(SYSTEM_TEMPLATE),
-            HumanMessagePromptTemplate.fromTemplate(HUMAN_TEMPLATE),
+            HumanMessagePromptTemplate.fromTemplate(humanTemplate),
         ]);
 
         const chain = prompt.pipe(model).pipe(parser);
 
         try {
             onProgress(`**开始** AI request → ${endpoint} (model=${modelName})`);
+            onProgress(`📂 Scope: ${context.fileScopeHash} | File: ${context.fileName} | Code: ${context.code.length} chars`);
             const startedAt = Date.now();
 
             const stream = await chain.stream({
-                fileScopeHash: context.fileScopeHash,
                 format_instructions: formatInstructions,
                 astSection,
                 code: context.code.slice(0, 10000),

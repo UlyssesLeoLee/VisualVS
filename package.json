@@ -2,7 +2,7 @@
   "name": "visualvs",
   "displayName": "VisualVS",
   "description": "High-performance code topology visualizer. Transform complex source code into stunning call graphs using AI, LangChain, and Memgraph.",
-  "version": "0.4.7",
+  "version": "0.4.12",
   "publisher": "UlyssesLi",
   "icon": "icon.png",
   "repository": {

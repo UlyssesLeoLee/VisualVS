@@ -36,6 +36,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import { Pipeline, PipelineContext } from './core/pipeline';
 import { PluginError } from './core/plugin';
 import {
@@ -256,6 +257,9 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
                     case 'updateAutoMode':
                         this._context.globalState.update('autoMode', message.enabled);
                         break;
+                    case 'clean':
+                        this._handleClean();
+                        break;
                     case 'openNode':
                         this._handleOpenNode(message.data);
                         break;
@@ -383,6 +387,34 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
                 selection: new vscode.Range(foundLine, 0, foundLine, 0)
             });
         }
+    }
+
+    private async _handleClean() {
+        const doc = this._targetDocument;
+        const config = vscode.workspace.getConfiguration('visualvs');
+        const host = config.get<string>('memgraph.host') || 'localhost';
+        const port = config.get<number>('memgraph.port') || 37788;
+        const user = config.get<string>('visualvs.memgraph.username');
+        const pass = config.get<string>('visualvs.memgraph.password');
+
+        if (doc) {
+            const hash = crypto.createHash('md5').update(doc.fileName).digest('hex');
+            const scopeHash = `file_${hash.substring(0, 8)}`;
+            const client = new MemgraphClient(host, port, user, pass);
+            try {
+                vvsOutputChannel.appendLine(`[Clean] Wiping scope ${scopeHash} from Memgraph...`);
+                await client.deleteByScope(scopeHash);
+                vvsOutputChannel.appendLine(`[Clean] Scope ${scopeHash} wiped.`);
+            } catch (err: any) {
+                vvsOutputChannel.appendLine(`[Clean] DB cleanup failed: ${err.message}`);
+            } finally {
+                await client.close();
+            }
+        }
+
+        this._targetDocument = undefined;
+        this.postMessageToWebview({ type: 'updateContext', currentFile: undefined, fullPath: undefined });
+        vvsOutputChannel.appendLine('[Clean] Internal state reset.');
     }
 
     private _syncState() {

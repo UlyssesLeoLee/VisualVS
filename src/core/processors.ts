@@ -127,6 +127,9 @@ export class EnvLoaderPlugin extends BasePlugin {
             ctx.fileScopeHash = 'global_scope';
             log('No active file — using global scope.');
         }
+
+        // Set default fallback fetch query so Cypher editor is never empty
+        ctx.fetchCypher = `MATCH (n {fileScope: '${ctx.fileScopeHash}'}) OPTIONAL MATCH (n)-[r]->(m {fileScope: '${ctx.fileScopeHash}'}) RETURN n, r, m`;
     }
 
     // teardown: no resources acquired → inherited no-op from BasePlugin
@@ -397,7 +400,11 @@ export class GraphFetchPlugin extends BasePlugin {
     async execute(ctx: PipelineContext, log: Logger): Promise<void> {
         const client = this._client!;
         log('Fetching graph data...');
-        ctx.graphData = await client.fetchGraphData();
+        if (ctx.fetchCypher) {
+            ctx.graphData = await client.executeGraphQuery(ctx.fetchCypher);
+        } else {
+            ctx.graphData = await client.fetchGraphData(); // Fallback to all if no specific query
+        }
         log(`Fetched ${ctx.graphData.nodes.length} nodes, ${ctx.graphData.edges.length} edges.`);
 
         // Volatile mode: purge scoped data after reading (ephemeral analysis)

@@ -9,6 +9,11 @@ $newVersion = $pkg.version
 
 Write-Host "==> Target Version: $newVersion" -ForegroundColor Green
 
+Write-Host "==> Updating version in README.md..." -ForegroundColor Cyan
+$readme = Get-Content README.md -Raw
+$readme = $readme -replace '(?<=version-)\d+\.\d+\.\d+(?=-blueviolet)', $newVersion
+Set-Content README.md $readme -NoNewline
+
 Write-Host "==> Compiling TypeScript..." -ForegroundColor Cyan
 npm run compile
 
