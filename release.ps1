@@ -10,9 +10,11 @@ $newVersion = $pkg.version
 Write-Host "==> Target Version: $newVersion" -ForegroundColor Green
 
 Write-Host "==> Updating version in README.md..." -ForegroundColor Cyan
-$readme = Get-Content README.md -Raw
+$utf8NoBOM = New-Object System.Text.UTF8Encoding($false)
+$readmePath = Join-Path $PSScriptRoot "README.md"
+$readme = [System.IO.File]::ReadAllText($readmePath, $utf8NoBOM)
 $readme = $readme -replace '(?<=version-)\d+\.\d+\.\d+(?=-blueviolet)', $newVersion
-Set-Content README.md $readme -NoNewline
+[System.IO.File]::WriteAllText($readmePath, $readme, $utf8NoBOM)
 
 Write-Host "==> Compiling TypeScript..." -ForegroundColor Cyan
 npm run compile
