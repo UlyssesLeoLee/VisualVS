@@ -1,8 +1,8 @@
 {
   "name": "visualvs",
   "displayName": "VisualVS",
-  "description": "Visualize code topology using AI and Memgraph. Source: https://github.com/UlyssesLeoLee/VisualVS",
-  "version": "0.4.3",
+  "description": "High-performance code topology visualizer. Transform complex source code into stunning call graphs using AI, LangChain, and Memgraph.",
+  "version": "0.4.5",
   "publisher": "UlyssesLi",
   "icon": "icon.png",
   "repository": {

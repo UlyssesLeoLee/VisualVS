@@ -1202,10 +1202,13 @@
                 data.nodes.forEach(n => {
                     const el = document.createElement('div');
                     el.className = 'text-view-item';
+                    const color = getColor(n.id);
+                    el.style.borderLeft = `4px solid ${color}`;
+                    
                     const props = Object.entries(n.properties || {})
                         .map(([k, v]) => `<span style="color:#aaa">${k}:</span> <span style="color:#e5c07b">${JSON.stringify(v)}</span>`)
                         .join('<br>');
-                    el.innerHTML = `<strong style="color:var(--accent)">${n.label}</strong> <span style="color:var(--text-dim)">(ID: ${n.id})</span><br>${props}`;
+                    el.innerHTML = `<strong style="color:${color}">${n.label}</strong> <span style="color:var(--text-dim)">(ID: ${n.id})</span><br>${props}`;
                     nodesSection.appendChild(el);
                 });
                 textView.appendChild(nodesSection);
@@ -1223,10 +1226,13 @@
                 data.edges.forEach(e => {
                     const el = document.createElement('div');
                     el.className = 'text-view-item';
+                    const color = getColor(e.id || (e.start + e.end));
+                    el.style.borderLeft = `4px solid ${color}`;
+                    
                     const props = Object.entries(e.properties || {})
                         .map(([k, v]) => `<span style="color:#aaa">${k}:</span> <span style="color:#e5c07b">${JSON.stringify(v)}</span>`)
                         .join('<br>');
-                    el.innerHTML = `<strong style="color:#c678dd">${e.label}</strong> <span style="color:var(--text-dim)">(${e.start} → ${e.end})</span><br>${props}`;
+                    el.innerHTML = `<strong style="color:${color}">${e.label}</strong> <span style="color:var(--text-dim)">(${e.start} → ${e.end})</span><br>${props}`;
                     edgesSection.appendChild(el);
                 });
                 textView.appendChild(edgesSection);
