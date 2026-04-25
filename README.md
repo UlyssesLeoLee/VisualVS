@@ -1,9 +1,9 @@
 # VisualVS - AI-Driven Code Topology & Insight Visualizer
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE.txt)
-[![VisualVS Version](https://img.shields.io/badge/version-0.4.16-blueviolet.svg)](package.json)
+[![VisualVS Version](https://img.shields.io/badge/version-0.4.17-blueviolet.svg)](package.json)
 
-**VisualVS** 是一款专为架构师和高级开发人员打造照的 VS Code 深度洞察工具。它将 **LLM (大语言模型)**、**LangChain** 和 **Memgraph 属性图数据库** 完美融合，通过高颜值的霓虹风格拓扑图，将枯燥的代码逻辑转化为可感知的视觉资产。
+**VisualVS** 是一款专为架构师和高级开发人员打造的 VS Code 深度洞察工具。它将 **LLM (大语言模型)**、**LangChain** 和 **Memgraph 属性图数据库** 完美融合，通过高颜值的霓虹风格拓扑图，将枯燥的代码逻辑转化为可感知的视觉资产。
 
 ---
 
@@ -31,6 +31,88 @@
    - 从 VS Code Marketplace 搜索 `VisualVS` 或手动安装 `.vsix` 文件。
 3. **配置参数**：
    - 在 VS Code 设置中配置 `ai.apiKey`, `ai.endpoint`, `memgraph.host` 等参数。
+
+---
+
+## ⚡ 快速上手 — 必读配置指南
+
+> **本节是最关键的设置步骤，请务必完整阅读以确保无障碍使用。**
+
+### 第一步：选择 Memgraph 连接模式
+
+VisualVS 支持两种连接方式，在 VS Code 设置中选择其一：
+
+#### 方式 A：Direct 模式 (推荐本地环境)
+
+适合在本地 Docker 或任意主机上运行 Memgraph 的场景。
+
+```bash
+# 用 Docker 在本地快速启动 Memgraph（映射到 37788 端口）
+docker run -p 37788:7687 memgraph/memgraph:latest
+```
+
+然后在 VS Code 设置中（`Ctrl+,` → 搜索 `VisualVS`）填写：
+
+| 设置项 | 值 |
+|---|---|
+| `visualvs.memgraph.connectionMode` | `direct` |
+| `visualvs.memgraph.host` | `localhost` |
+| `visualvs.memgraph.port` | `37788` |
+
+---
+
+#### 方式 B：K8s 模式 (自动部署与转发)
+
+如果你已有 Kubernetes 集群且 `kubectl` 已正确配置，VisualVS 会**自动**部署 Memgraph 实例并建立端口转发。
+
+在 VS Code 设置中填写：
+
+| 设置项 | 值 |
+|---|---|
+| `visualvs.memgraph.connectionMode` | `k8s` |
+| `visualvs.memgraph.podSelector` | `app=memgraph`（默认） |
+| `visualvs.memgraph.namespace` | 你的 K8s 命名空间（留空则使用 `default`） |
+| `visualvs.memgraph.port` | `37788` |
+
+---
+
+### 第二步：配置 AI 服务 (NVIDIA / OpenAI / Ollama)
+
+在 VS Code 设置（`Ctrl+,` → 搜索 `VisualVS`）中填写以下参数。**注意：所有的 Endpoint 必须包含完整的 `/v1/chat/completions` 后缀。**
+
+#### 🟢 方案 1：使用 NVIDIA NIM (强烈推荐)
+NVIDIA 提供的模型处理代码逻辑极快且精准。
+
+| 设置项 | 值 |
+|---|---|
+| `visualvs.ai.endpoint` | `https://integrate.api.nvidia.com/v1/chat/completions` |
+| `visualvs.ai.apiKey` | `nvapi-xxxx...` (从 build.nvidia.com 免费获取) |
+| `visualvs.ai.model` | `meta/llama-3.1-405b-instruct` (或其它 NIM 模型) |
+
+#### 🔵 方案 2：使用标准 OpenAI
+| 设置项 | 值 |
+|---|---|
+| `visualvs.ai.endpoint` | `https://api.openai.com/v1/chat/completions` |
+| `visualvs.ai.apiKey` | `sk-xxxx...` |
+| `visualvs.ai.model` | `gpt-4o` 或 `gpt-4-turbo` |
+
+#### ⚪ 方案 3：使用本地 Ollama
+| 设置项 | 值 |
+|---|---|
+| `visualvs.ai.endpoint` | `http://localhost:11434/v1/chat/completions` |
+| `visualvs.ai.apiKey` | `ollama` (任意非空字符串) |
+| `visualvs.ai.model` | `llama3` 或 `codellama` |
+
+---
+
+### 第三步：开始分析
+
+1. 打开任意源代码文件
+2. 在 VS Code 右侧辅助侧边栏找到 **VVS** 图标并点击打开
+3. 点击 **Analyze** 按钮
+4. 在 **Graph View** 中浏览拓扑图
+
+---
 
 ## 🛡️ 许可证
 
