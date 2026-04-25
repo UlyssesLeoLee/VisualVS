@@ -412,9 +412,7 @@ class VisualVSSidebarProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        this._targetDocument = undefined;
-        this.postMessageToWebview({ type: 'updateContext', currentFile: undefined, fullPath: undefined });
-        vvsOutputChannel.appendLine('[Clean] Internal state reset.');
+        vvsOutputChannel.appendLine('[Clean] DB scope wiped. Ready for re-analysis.');
     }
 
     private _syncState() {

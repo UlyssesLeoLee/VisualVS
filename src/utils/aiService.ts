@@ -6,7 +6,6 @@
  */
 
 import { ChatOpenAI } from '@langchain/openai';
-import { ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/prompts';
 import { JsonOutputParser } from '@langchain/core/output_parsers';
 import { PipelineContext } from '../core/pipeline';
 
@@ -87,66 +86,86 @@ export class AIService {
         const parser = new JsonOutputParser<CypherGenerationResult>();
         const formatInstructions = parser.getFormatInstructions();
 
-        const humanTemplate = HUMAN_TEMPLATE_BASE.replace(/%FILE_SCOPE_HASH%/g, context.fileScopeHash);
+        // Pre-substitute all dynamic content to avoid LangChain's f-string parser
+        // choking on { } characters that appear naturally in source code.
+        const humanTemplate = HUMAN_TEMPLATE_BASE
+            .replace(/%FILE_SCOPE_HASH%/g, context.fileScopeHash)
+            .replace('{format_instructions}', formatInstructions)
+            .replace('{astSection}', astSection)
+            .replace('{code}', context.code.slice(0, 10000));
 
-        const prompt = ChatPromptTemplate.fromMessages([
-            SystemMessagePromptTemplate.fromTemplate(SYSTEM_TEMPLATE),
-            HumanMessagePromptTemplate.fromTemplate(humanTemplate),
-        ]);
-
-        const chain = prompt.pipe(model).pipe(parser);
+        // Build messages directly — no LangChain template parsing of user content
+        const messages = [
+            { role: 'system' as const, content: SYSTEM_TEMPLATE },
+            { role: 'user' as const, content: humanTemplate },
+        ];
 
         try {
             onProgress(`**开始** AI request → ${endpoint} (model=${modelName})`);
             onProgress(`📂 Scope: ${context.fileScopeHash} | File: ${context.fileName} | Code: ${context.code.length} chars`);
             const startedAt = Date.now();
 
-            const stream = await chain.stream({
-                format_instructions: formatInstructions,
-                astSection,
-                code: context.code.slice(0, 10000),
-            }, context.abortSignal ? { signal: context.abortSignal } : undefined);
+            const stream = await model.stream(messages, 
+                context.abortSignal ? { signal: context.abortSignal } : undefined);
 
-            let lastThoughtsCount = 0;
+            let rawText = '';
             let chunkCount = 0;
-            let finalResult: Partial<CypherGenerationResult> = {};
 
             for await (const chunk of stream) {
                 chunkCount++;
-                finalResult = chunk;
-                if (chunk.thoughts && Array.isArray(chunk.thoughts)) {
-                    if (chunk.thoughts.length > lastThoughtsCount) {
-                        const newThought = chunk.thoughts[chunk.thoughts.length - 1];
-                        if (newThought) {
-                            onProgress(`🤔 ${newThought}`);
-                        }
-                        lastThoughtsCount = chunk.thoughts.length;
-                    }
-                }
+                const token = chunk.content?.toString() || '';
+                rawText += token;
             }
 
             const elapsed = Date.now() - startedAt;
+            onProgress(`AI responded in ${elapsed}ms (${chunkCount} chunks, ${rawText.length} chars)`);
+
+            // Parse the accumulated JSON response
+            let parsed: CypherGenerationResult;
+            try {
+                parsed = await parser.parse(rawText);
+            } catch (parseErr: any) {
+                onProgress(`⚠ JSON parse failed, attempting extraction...`);
+                // Try to extract JSON from markdown code fences or partial output
+                const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    parsed = JSON.parse(jsonMatch[0]);
+                } else {
+                    throw new Error(`Failed to parse AI response as JSON: ${parseErr.message}\nRaw: ${rawText.slice(0, 500)}`);
+                }
+            }
+
+            // Log thoughts
+            if (parsed.thoughts && Array.isArray(parsed.thoughts)) {
+                for (const thought of parsed.thoughts) {
+                    onProgress(`🤔 ${thought}`);
+                }
+            }
+
             const normalize = (val: any) => Array.isArray(val) ? val.join(';\n') : (val || '');
-            const writeCypher = normalize(finalResult.writeCypher);
-            const fetchCypher = normalize(finalResult.fetchCypher)
+            const writeCypher = normalize(parsed.writeCypher);
+            const fetchCypher = normalize(parsed.fetchCypher)
                 || `MATCH (n {fileScope: '${context.fileScopeHash}'}) OPTIONAL MATCH (n)-[r]->(m {fileScope: '${context.fileScopeHash}'}) RETURN n, r, m`;
 
             if (!writeCypher) {
                 throw new Error('AI returned no writeCypher (empty response).');
             }
 
-            onProgress(`**完成** AI response in ${elapsed}ms (chunks=${chunkCount}, writeCypher=${writeCypher.length} chars)`);
+            onProgress(`**完成** writeCypher=${writeCypher.length} chars`);
 
             return {
-                thoughts: finalResult.thoughts || [],
+                thoughts: parsed.thoughts || [],
                 writeCypher,
                 fetchCypher,
             };
 
         } catch (error: any) {
             if (error?.name === 'AbortError') throw error;
-            console.error('JsonOutputParser failed:', error);
-            throw new Error(`AI Analysis failed: ${error.message || String(error)}`);
+            const detail = error?.response?.data
+                ? JSON.stringify(error.response.data)
+                : (error?.body || '');
+            console.error('AI generation failed:', error);
+            throw new Error(`AI Analysis failed: ${error.message || String(error)}${detail ? `\nDetails: ${detail}` : ''}`);
         }
     }
 }
